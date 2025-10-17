@@ -79,6 +79,32 @@ impl Era {
         })
     }
 
+    pub fn deserialize_blocks(buf: &[u8]) -> anyhow::Result<Vec<CompressedSignedBeaconBlock>> {
+        let file_length = buf.len();
+        let file = E2StoreMemory::deserialize(buf)?;
+        let entries_length = file.entries.len();
+        let mut blocks = vec![];
+
+        let slot_index_block = SlotIndexBlockEntry::try_from(&file.entries[entries_length - 2])?;
+        let slot_indexes = Era::get_block_slot_indexes(file_length, &slot_index_block);
+
+        // an era file has 4 entries which are not blocks
+        ensure!(
+            slot_indexes.len() == entries_length - 4,
+            "invalid slot index block: incorrect count {} {}",
+            slot_indexes.len(),
+            entries_length - 4
+        );
+        for (index, slot) in slot_indexes.into_iter().enumerate() {
+            let entry = &file.entries[index + 1];
+            let fork = get_beacon_fork(slot);
+            let beacon_block = CompressedSignedBeaconBlock::try_from(entry, fork)?;
+            blocks.push(beacon_block);
+        }
+
+        Ok(blocks)
+    }
+
     /// Deserialize the `BeaconState` from the `Era` file.
     pub fn deserialize_to_beacon_state(buf: &[u8]) -> anyhow::Result<BeaconState> {
         let file = E2StoreMemory::deserialize(buf)?;
