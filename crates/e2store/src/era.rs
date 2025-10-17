@@ -83,6 +83,10 @@ impl Era {
         let file_length = buf.len();
         let file = E2StoreMemory::deserialize(buf)?;
         let entries_length = file.entries.len();
+        if entries_length == 3 {
+            // the genesis era file has no blocks
+            return Ok(vec![]);
+        }
         let mut blocks = vec![];
 
         let slot_index_block = SlotIndexBlockEntry::try_from(&file.entries[entries_length - 2])?;
@@ -97,9 +101,11 @@ impl Era {
         );
         for (index, slot) in slot_indexes.into_iter().enumerate() {
             let entry = &file.entries[index + 1];
-            let fork = get_beacon_fork(slot);
-            let beacon_block = CompressedSignedBeaconBlock::try_from(entry, fork)?;
-            blocks.push(beacon_block);
+            // skip blocks of unsupported forks
+            if let Some(fork) = try_get_beacon_fork(slot) {
+                let beacon_block = CompressedSignedBeaconBlock::try_from(entry, fork)?;
+                blocks.push(beacon_block);
+            }
         }
 
         Ok(blocks)
@@ -416,6 +422,21 @@ impl TryFrom<Entry> for SlotIndexState {
             indices,
             count,
         })
+    }
+}
+
+pub fn try_get_beacon_fork(slot_index: u64) -> Option<ForkName> {
+    if slot_index < 4_636_672 {
+        // e2store/era doesn't support this fork
+        None
+    } else if (4_636_672..6_209_536).contains(&slot_index) {
+        Some(ForkName::Bellatrix)
+    } else if (6_209_536..8_626_176).contains(&slot_index) {
+        Some(ForkName::Capella)
+    } else if (8_626_176..11_649_024).contains(&slot_index) {
+        Some(ForkName::Deneb)
+    } else {
+        Some(ForkName::Electra)
     }
 }
 
