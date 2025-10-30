@@ -79,7 +79,10 @@ impl Era {
         })
     }
 
-    pub fn deserialize_blocks(buf: &[u8]) -> anyhow::Result<Vec<CompressedSignedBeaconBlock>> {
+    pub fn deserialize_blocks(
+        buf: &[u8],
+        chain_id: u64,
+    ) -> anyhow::Result<Vec<CompressedSignedBeaconBlock>> {
         let file_length = buf.len();
         let file = E2StoreMemory::deserialize(buf)?;
         let entries_length = file.entries.len();
@@ -99,12 +102,24 @@ impl Era {
             slot_indexes.len(),
             entries_length - 4
         );
+        let mut blocks_skipped_msg_printed = false;
         for (index, slot) in slot_indexes.into_iter().enumerate() {
             let entry = &file.entries[index + 1];
             // skip blocks of unsupported forks
-            if let Some(fork) = try_get_beacon_fork(slot) {
-                let beacon_block = CompressedSignedBeaconBlock::try_from(entry, fork)?;
-                blocks.push(beacon_block);
+            match try_get_beacon_fork(slot, chain_id) {
+                Err(ForkLookupError::UnsupportedChain) => {
+                    return Err(anyhow!("unsupported chain id {} for era file", chain_id))
+                }
+                Err(ForkLookupError::UnsupportedFork) => {
+                    if !blocks_skipped_msg_printed {
+                        blocks_skipped_msg_printed = true;
+                        eprintln!("skipping blocks of unsupported fork");
+                    }
+                }
+                Ok(fork) => {
+                    let beacon_block = CompressedSignedBeaconBlock::try_from(entry, fork)?;
+                    blocks.push(beacon_block);
+                }
             }
         }
 
@@ -425,18 +440,68 @@ impl TryFrom<Entry> for SlotIndexState {
     }
 }
 
-pub fn try_get_beacon_fork(slot_index: u64) -> Option<ForkName> {
-    if slot_index < 4_636_672 {
-        // e2store/era doesn't support this fork
-        None
-    } else if (4_636_672..6_209_536).contains(&slot_index) {
-        Some(ForkName::Bellatrix)
-    } else if (6_209_536..8_626_176).contains(&slot_index) {
-        Some(ForkName::Capella)
-    } else if (8_626_176..11_649_024).contains(&slot_index) {
-        Some(ForkName::Deneb)
-    } else {
-        Some(ForkName::Electra)
+pub enum ForkLookupError {
+    UnsupportedChain,
+    UnsupportedFork,
+}
+
+pub fn try_get_beacon_fork(slot_index: u64, chain_id: u64) -> Result<ForkName, ForkLookupError> {
+    const MAINNET: u64 = 1;
+    const SEPOLIA: u64 = 11155111;
+    const HOLESKI: u64 = 17000;
+    const HOODI: u64 = 560048;
+
+    // go-ethereum/beacon/params/networks.go
+    const MAINNET_BELLATRIX: u64 = 144896 * 32;
+    const MAINNET_CAPELLA: u64 = 194048 * 32;
+    const MAINNET_DENEB: u64 = 269568 * 32;
+    const MAINNET_ELECTRA: u64 = 364032 * 32;
+    const MAINNET_FULU: u64 = 411392 * 32;
+
+    const SEPOLIA_BELLATRIX: u64 = 100 * 32;
+    const SEPOLIA_CAPELLA: u64 = 56832 * 32;
+    const SEPOLIA_DENEB: u64 = 132608 * 32;
+    const SEPOLIA_ELECTRA: u64 = 222464 * 32;
+    const SEPOLIA_FULU: u64 = 272640 * 32;
+
+    const HOLESKI_CAPELLA: u64 = 256 * 32;
+    const HOLESKI_DENEB: u64 = 29696 * 32;
+    const HOLESKI_ELECTRA: u64 = 115968 * 32;
+    const HOLESKI_FULU: u64 = 165120 * 32;
+
+    const HOODI_ELECTRA: u64 = 2048 * 32;
+    const HOODI_FULU: u64 = 50688 * 32;
+
+    match chain_id {
+        MAINNET => match slot_index {
+            0..MAINNET_BELLATRIX => Err(ForkLookupError::UnsupportedFork), // pre-merge
+            MAINNET_BELLATRIX..MAINNET_CAPELLA => Ok(ForkName::Bellatrix),
+            MAINNET_CAPELLA..MAINNET_DENEB => Ok(ForkName::Capella),
+            MAINNET_DENEB..MAINNET_ELECTRA => Ok(ForkName::Deneb),
+            MAINNET_ELECTRA..MAINNET_FULU => Ok(ForkName::Electra),
+            MAINNET_FULU.. => Err(ForkLookupError::UnsupportedFork),
+        },
+        SEPOLIA => match slot_index {
+            0..SEPOLIA_BELLATRIX => Err(ForkLookupError::UnsupportedFork), // pre-merge
+            SEPOLIA_BELLATRIX..SEPOLIA_CAPELLA => Ok(ForkName::Bellatrix),
+            SEPOLIA_CAPELLA..SEPOLIA_DENEB => Ok(ForkName::Capella),
+            SEPOLIA_DENEB..SEPOLIA_ELECTRA => Ok(ForkName::Deneb),
+            SEPOLIA_ELECTRA..SEPOLIA_FULU => Ok(ForkName::Electra),
+            SEPOLIA_FULU.. => Err(ForkLookupError::UnsupportedFork),
+        },
+        HOODI => match slot_index {
+            0..HOODI_ELECTRA => Ok(ForkName::Deneb),
+            HOODI_ELECTRA..HOODI_FULU => Ok(ForkName::Electra),
+            HOODI_FULU.. => Err(ForkLookupError::UnsupportedFork),
+        },
+        HOLESKI => match slot_index {
+            0..HOLESKI_CAPELLA => Ok(ForkName::Bellatrix),
+            HOLESKI_CAPELLA..HOLESKI_DENEB => Ok(ForkName::Capella),
+            HOLESKI_DENEB..HOLESKI_ELECTRA => Ok(ForkName::Deneb),
+            HOLESKI_ELECTRA..HOLESKI_FULU => Ok(ForkName::Electra),
+            HOLESKI_FULU.. => Err(ForkLookupError::UnsupportedFork),
+        },
+        _ => Err(ForkLookupError::UnsupportedChain),
     }
 }
 
