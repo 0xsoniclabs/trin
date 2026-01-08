@@ -6,16 +6,13 @@ use std::{
 use alloy_hardforks::{EthereumChainHardforks, EthereumHardfork, EthereumHardforks, ForkCondition};
 use anyhow::anyhow;
 use bimap::BiHashMap;
-use discv5::Enr;
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 
 use super::{
     consensus::constants::SECONDS_PER_SLOT,
     network::{Network, Subnetwork},
-    protocol_versions::{
-        ProtocolVersion, ProtocolVersionError, ProtocolVersionList, ENR_PROTOCOL_VERSION_KEY,
-    },
+    protocol_versions::{ProtocolVersion, ProtocolVersionList},
 };
 
 /// Beacon chain mainnet genesis time: Tue Dec 01 2020 12:00:23 GMT+0000
@@ -104,28 +101,6 @@ impl NetworkSpec {
             .ok_or(anyhow!(
                 "Cannot find protocol identifier for subnetwork: {subnetwork}"
             ))
-    }
-
-    pub fn latest_common_protocol_version(
-        &self,
-        enr: &Enr,
-    ) -> Result<ProtocolVersion, ProtocolVersionError> {
-        let Some(other_supported_versions) = enr
-            .get_decodable::<ProtocolVersionList>(ENR_PROTOCOL_VERSION_KEY)
-            .transpose()
-            .map_err(|_| ProtocolVersionError::FailedToDecode)?
-        else {
-            return Ok(ProtocolVersion::V0);
-        };
-
-        // The NetworkSpec's `supported_protocol_versions` are ordered chronologically.
-        // Hence, we iterate in reverse order to find the latest common version.
-        self.supported_protocol_versions
-            .iter()
-            .rev()
-            .find(|v| other_supported_versions.contains(v))
-            .copied()
-            .ok_or(ProtocolVersionError::NoMatchingVersion)
     }
 
     pub fn slot_to_timestamp(&self, slot: u64) -> SystemTime {
